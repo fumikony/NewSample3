@@ -1,0 +1,200 @@
+begintemplate MyNeuron3
+
+neuron_type = 0
+left_right = 0
+neuronNumber = 0
+numDend = 0
+numMaxDend = 0
+objref dendNumberMap
+
+public soma,dend,spike,axon
+create soma,dend[5],axon[5],spike
+
+public init
+public setNeuronType
+public setNeuronNumber
+public setRightOrLeft
+public getNeuronType
+public getNeuronNumber
+public getRightOrLeft
+public getDendNumber
+public getNumDend
+
+//============================================
+//init
+//Arg	x,y,z:dummy
+//	numDend
+//	dendNumberVector
+//Rtn	null
+//Smr	init
+//============================================
+proc init(){local x,y,z,i,weight localobj syn,dendNumberVector
+    x=$1 y=$2 z=$3 numDend = 5 dendNumberVector = $o5
+    
+    neuron_type = 0
+    left_right = 0
+    neuronNumber = 0
+    numMaxDend = 5
+    
+    initDendNumberMap(dendNumberVector)
+    
+    soma{
+	L = 30
+	Ra = 150
+	diam = 30
+	cm = 0.05
+	//insert pas
+	
+	
+	insert GPeA
+	gnabar_GPeA = 0.049
+	//gnabar_GPeA = 0.045
+	gkdrbar_GPeA = 0.057
+	//gkdrbar_GPeA = 0.06
+	//theta_m_GPeA = -35
+	
+	//insert hh
+    }
+    
+    spike{
+	L = 5.0
+	Ra = 35.4
+	diam = 2.0
+	cm = 0.5
+	//insert pas
+	
+	
+	insert GPeA
+	gnabar_GPeA = 0.049
+	//gnabar_GPeA = 0.045
+	gkdrbar_GPeA = 0.057
+	//gkdrbar_GPeA = 0.06
+	//theta_m_GPeA = -35
+	
+	//insert hh
+    }
+    
+    for i=0,numDend-1{
+	dend[i]{
+	    L = 100
+	    Ra = 150
+	    diam = 5.0
+	    cm = 0.5
+	    insert pas
+	}
+	
+	axon[i]{
+	    L = 60
+	    Ra = 150
+	    diam = 0.5
+	    cm = 1
+	    insert hh
+	    gnabar_hh = 0.12
+	    gkbar_hh = 0.036
+	    gl_hh = 0.0003
+	    el_hh = -54.3
+	}
+    }
+
+    forall {nseg = 9}
+    forall{Ra = 100 cm = 1}
+    
+    connect soma(0),spike(1)
+    for i = 0,numDend-1{
+	connect dend[i](0),soma(1)
+	connect axon[i](0),spike(1)
+    }
+    
+}
+
+proc setNeuronNumber(){
+    neuronNumber = $1
+}
+
+proc setNeuronType(){
+    neuronType = $1
+}
+
+proc setRightOrLeft(){
+    left_right = $1
+}
+
+func getNeuronNumber(){
+    return neuronNumber
+}
+
+func getNeuronType(){
+    return neuronType
+}
+
+func getRightOrLeft(){
+    return left_right
+}
+
+func getNumDend(){
+    return numDend
+}
+
+//============================================
+//initDendNumberMap
+//Arg	dendNumberVector :
+//		this vec needs to be an ASCENDING
+//		order.
+//Rtn	null
+//Smr	create dends according to input
+//============================================
+proc initDendNumberMap(){local i,num localobj dendNumberVector
+    dendNumberVector = $o1
+    
+    printf("\n== initDendNumberMap() ==\n")
+    dendNumberMap = new Vector()
+    
+    for i = 0,numMaxDend-1{
+	dendNumberMap.append(-1)
+    }
+    
+    for i = 0,dendNumberVector.size()-1{
+	num = dendNumberVector.x(i)
+	printf("=== num = %d\n",num)
+	dendNumberMap.x(num) = i
+    }
+    
+    printDendNumberMap()
+    
+    printf("== end initDendNumberMap() ==\n\n")
+}
+
+//============================================
+//printDendNumberMap
+//Arg	null 
+//Rtn	null
+//Smr	display the map of dendNumber
+//============================================
+proc printDendNumberMap(){local i
+    printf("\n== printDendNumberMap()\n")
+    
+    for i = 0,dendNumberMap.size()-1{
+	printf("==== dend[%d] = %d\n",i,dendNumberMap.x(i))
+    }
+    
+    printf("== end printDendNumberMap() \n\n")
+}
+
+//============================================
+//getDendNumber
+//Arg	dendNumber (0:4)
+//Rtn	dend
+//Smr
+//============================================
+func getDendNumber(){local dendNumber,i
+    i = $1
+    /*
+    //printf("=== getDendNumber() ===\n")
+    dendNumber = dendNumberMap.x(i)
+    //printf("==== Input:%d Output:%d\n",i,dendNumberMap.x(i))
+    //printf("=== end getDendNumber() ===\n")
+    return dendNumber*/
+    return i
+}
+
+endtemplate MyNeuron3

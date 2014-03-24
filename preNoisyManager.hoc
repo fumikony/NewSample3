@@ -1,0 +1,137 @@
+load_file("MyNeuron.hoc")
+load_file("stringHoc.hoc")
+
+nrnpython("import neuron")
+nrnpython("from neuron import h")
+nrnpython("import NormRand")
+
+begintemplate preNoisyManager
+
+public init
+public stepStimList
+public loadNormRand
+public getEta
+public initPreNoise
+public makeNormRand
+public progressStep
+public NCELL,TSTOP,BIN,MAX_BIN
+public nowTime,nowBin
+objref etaList
+objref sh
+
+proc init(){
+    NCELL = 86
+    TSTOP = 200
+    BIN = 250
+    MAX_BIN = 100
+    nowTime = 0
+    nowBin = 1
+    sh = new stringHoc()
+}
+
+//============================================
+//normRand()
+//Arg	null 
+//Rtn	null
+//Smr	outputNormRandFile
+//============================================
+proc makeNormRand(){localobj py
+    py = new PythonObject()
+    nrnpython("NormRand.startCNR()")
+}
+
+func getEta(){local inputTime
+    return etaList.object(nowTime/dt).x($1)
+}
+
+proc initPreNoise(){
+    nowTime = 0
+    nowBin = 1
+    updateNormRand()
+}
+
+//============================================
+//progressStep
+//Arg	null 
+//Rtn	null
+//Smr	
+//============================================
+proc progressStep(){
+    nowTime = nowTime + dt
+    //printf("nowTime = %f\n",nowTime)
+    if(nowTime >= BIN-dt){
+	nowTime = 0
+	nowBin = nowBin + 1
+	if(nowBin > MAX_BIN){
+	    nowBin = 1
+	}
+	updateNormRand()
+    }
+}
+
+//============================================
+//loadNormRand
+//Arg	null 
+//Rtn	null
+//Smr	This function reads a random 
+//	  number every 250msec. 
+//	The files to read differ every 250msec. 
+//	There are 20 totals of a file. 
+//	The 1st file is read when reading
+//	  the 21st piece. 
+//============================================
+proc loadNormRand(){local cellCounter,timeCounter,tgtTime,etaValue localobj tmpList,etaf
+    etaList = new List()
+    etaf = new File()
+    
+    sh.int2str(nowBin)
+    sh.strcat("../EtaList/EtaList",sh.int2strResult)
+    sh.strcat(sh.strcatResult,".txt")
+    etaf.ropen(sh.strcatResult)  
+
+    for timeCounter = 0,(BIN / dt) - 1{
+	//printf("timeCounter = %f\n",timeCounter)
+	tmpList = new Vector()
+	for cellCounter = 0,NCELL - 1{
+	    etaValue = etaf.scanvar()
+	    tmpList.append(etaValue)
+	}
+	etaList.append(tmpList)
+    }
+    
+    etaf.close()
+}
+
+proc initList(){local etaCounter,vecCounter
+    for etaCounter = 0,etaList.count() - 1{
+	for vecCounter = 0,etaList.object(etaCounter).size() - 1{
+	    etaList.object(etaCounter).remove(vecCounter)
+	}
+    }
+    etaList.remove_all()
+}
+
+proc updateNormRand(){local cellCounter,timeCounter,tgtTime,etaValue localobj tmpList,etaf
+    // initList()
+    etaList.remove_all()
+    etaf = new File()
+    
+    sh.int2str(nowBin)
+    sh.strcat("../EtaList/EtaList",sh.int2strResult)
+    sh.strcat(sh.strcatResult,".txt")
+    etaf.ropen(sh.strcatResult)
+
+    for timeCounter = 0,(BIN / dt) - 1{
+	//printf("timeCounter = %f\n",timeCounter)
+	tmpList = new Vector()
+	for cellCounter = 0,NCELL - 1{
+	    etaValue = etaf.scanvar()
+	    tmpList.append(etaValue)
+	}
+	etaList.append(tmpList)
+    }
+    
+    etaf.close()
+}
+
+endtemplate preNoisyManager

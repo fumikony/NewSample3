@@ -1,0 +1,89 @@
+load_file("MyNeuron.hoc")
+load_file("MyNetwork.hoc")
+load_file("preNoisyManager2.hoc")
+
+nrnpython("import neuron")
+nrnpython("from neuron import h")
+nrnpython("import sigmoid")
+nrnpython("import CreateStimEvents")
+nrnpython("import tranceport1")
+
+TSTOP = 5000
+thresholdFire = -9
+objref pc
+objref csiSingle
+objref pnm
+objref nil
+
+proc initSim(){local stimCounter
+    tstop = TSTOP
+    t = 0
+    pc = new ParallelContext()
+}
+
+func startSim(){local loop,loopdt,tFire
+    pnm = new preNoisyManager(TSTOP)
+    csiSingle = new MyNetwork(TSTOP)
+    //csiSingle.connectCells(tFire)
+    csiSingle.setFeromonStim(500)
+    tFire = $1
+    stdinit()
+    pc.nthread(8)
+    
+    /*
+    for loop = 0,(TSTOP/2)-1{
+	for loopdt = 0,(1/dt)-1{
+	    
+	    for stimCounter = 0,csiSingle.getNoiseListCount()-1{
+		eta = pnm.getEta(stimCounter)
+		csiSingle.setEtaToStim(eta,stimCounter)
+	    }
+	    pnm.progressStep()
+	    step()
+	}
+	flushPlot()
+    }*/
+    
+    
+    csiSingle.connectCells(tFire)
+    csiSingle.resetNoise()
+    
+    pnm.initPreNoise()
+    
+    for loop = 0,(TSTOP)-1{
+	for loopdt = 0,(1/dt)-1{
+	    
+	    for stimCounter = 0,csiSingle.getNoiseListCount()-1{
+		eta = pnm.getEta(stimCounter)
+		csiSingle.setEtaToStim(eta,stimCounter)
+	    }
+	    pnm.progressStep()
+	    step()
+	}
+	flushPlot()
+    }
+    
+    //csiSingle.setNilNetCon()
+    //tFire = csiSingle.updateSigma(5500)
+    pnm.initPreNoise()
+    
+    csiSingle.writeVoltageRecorder()
+    pc.nthread(1)
+    
+    return tFire
+}
+
+proc st(){local loop,tFire
+    tFire = -20
+    initSim()
+    
+    //for loop = 0,100{
+	printf("==================LOOP %f===============\n",loop)	
+	tFire = startSim(tFire)
+    //}
+}
+
+proc fireCounter(){localobj py
+    py = new PythonObject()
+    nrnpython("tranceport1.fireCount('VoltageRecorder.csv','fireNum.csv',5000.0)")
+}

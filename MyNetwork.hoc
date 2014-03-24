@@ -1,0 +1,380 @@
+load_file("MyNeuron.hoc")
+load_file("MyNeuron2.hoc")
+load_file("MyNeuron3.hoc")
+
+begintemplate MyNetwork
+
+objref cellList
+objref lrList
+objref typeList
+objref synList
+objref ncList
+objref conMatrix
+objref dendMatrix
+objref dendVectorList
+
+objref tempPreNeuronNumberList
+objref tempWeightList
+objref noiseList
+objref vrecList
+objref feromonList
+
+
+public init
+public createCells
+public getNumCells
+public resetNoise
+public setEtaToStim
+public writeVoltageRecorder
+public setFeromonStim
+public connectCells
+public getNoiseListCount
+public NCELL,NCELL_HALF,NINPUT,NOUTPUT,TSTOP
+
+proc init(){
+    NCELL = 86
+    NCELL_HALF = 43
+    NINPUT = 5
+    NOUTPUT = 5
+    TSTOP = $1
+    
+    readConnectionFile()
+    createDendMatrix()
+    convertDendMatrixToDendVectorList(NINPUT)
+    createCells()
+    setVoltageRecorder()
+    //connectCells(-10)
+    setNoise()
+}
+
+func getNoiseListCount(){
+    return noiseList.count()
+}
+
+func getNumCells(){
+    return cellList.size()
+}
+
+proc setFeromonStim(){local cellCounter,dendCounter,nNumber,delayTime localobj noiseStim
+    delayTime = $1
+    feromonList = new List()
+    for cellCounter = 0,NCELL - 1{
+	nNumber = cellCounter + 1
+	//if(nNumber == 5 || nNumber == 7 || nNumber == 9 || nNumber == 15 || nNumber == 23 || nNumber == 24 || nNumber == 39 || nNumber == 48 || nNumber == 50 || nNumber == 52 || nNumber == 58 || nNumber == 66 || nNumber == 67 || nNumber == 82 ){
+	//if(nNumber == 5 || nNumber == 7 || nNumber == 9 || nNumber == 15 || nNumber == 23 || nNumber == 24 || nNumber == 39 ){
+	if(nNumber == 5 || nNumber == 7 || nNumber == 9 || nNumber == 15 || nNumber == 23 || nNumber == 24 ){
+	    //if(nNumber == 15){
+	    //if(nNumber == 48 || nNumber == 50 || nNumber == 52 || nNumber == 58 || nNumber == 66 || nNumber == 67 || nNumber == 82 ){
+	    //for dendCounter = 0,NDEND - 1{
+	    cellList.object(cellCounter).soma{
+		noiseStim = new IClamp(0.5)
+		noiseStim.amp = 5.0
+		noiseStim.dur = 500
+		noiseStim.del = delayTime
+		feromonList.append(noiseStim)
+	    }
+	    //}
+	}
+    }
+}
+
+proc setEtaToStim(){local neuronNumber,eta,dendCounter
+    eta = $1
+    neuronNumber = $2
+    noiseList.object(neuronNumber).setEta(eta)
+}
+
+proc createCells(){local cellCounter localobj myNeuron
+    cellList = new List()
+    printf("--- createCells() ---\n")
+    
+    for cellCounter = 0,NCELL-1{
+	printf("---- NEURON : %d , NUM_DEND : %d\n",cellCounter,dendVectorList.object(cellCounter).size())
+	myNeuron = new MyNeuron2(0,0,0,dendVectorList.object(cellCounter).size(),dendVectorList.object(cellCounter))
+	//myNeuron = new MyNeuron3(0,0,0,dendVectorList.object(cellCounter).size(),dendVectorList.object(cellCounter))
+	myNeuron.setNeuronNumber(cellCounter)
+	myNeuron.setNeuronType(typeList.x(cellCounter))
+	myNeuron.setRightOrLeft(lrList.x(cellCounter))
+	cellList.append(myNeuron)
+    }
+    
+    printf("--- end createCells() ---\n")
+}
+
+proc setVoltageRecorder(){local cellCounter localobj recorder
+    vrecList = new List()
+    
+    for cellCounter = 0,NCELL - 1{
+	recorder = new Vector()
+	recorder.record(&cellList.object(cellCounter).soma.v(0.5))
+	vrecList.append(recorder)
+    }
+}
+
+proc writeVoltageRecorder(){local cellCounter,timeCounter localobj savef
+    
+    savef = new File()
+    savef.wopen("VoltageRecorder.csv")
+    
+    printf("WRITE VOLTAGE_RECORDER\n")
+    
+    savef.printf("time")
+    for cellCounter = 0,NCELL - 1{
+	savef.printf(",%f",cellCounter)
+    }
+    savef.printf("\n")
+    for timeCounter = 0,TSTOP / dt - 1{
+	savef.printf("%f",timeCounter*dt)
+	for cellCounter = 0,NCELL - 1{
+	    savef.printf(",%f",vrecList.object(cellCounter).x(timeCounter))
+	}	
+	savef.printf("\n")
+    }
+    
+    printf("END WRITING\n")
+    
+    savef.close()
+    
+}
+
+proc setNoise(){local cellCounter,tempSigma,tempIave,nNumber,dendCounter localobj noiseStim,stimEvents
+    noiseList = new List()
+    stimEvents = new File()
+    stimEvents.ropen("StimEvents.txt")
+    
+    for cellCounter = 0,NCELL - 1{
+	nNumber = stimEvents.scanvar()
+	tempIave = stimEvents.scanvar()
+	tempSigma = stimEvents.scanvar()
+	
+	cellList.object(cellCounter).soma{
+	    noiseStim = new preNoisyI(0.5)
+	    noiseStim.iave = tempIave
+	    noiseStim.sigma = tempSigma
+	    noiseStim.del = 0
+	    noiseStim.dur = TSTOP
+	    noiseList.append(noiseStim)
+	}
+    }
+    
+    stimEvents.close()
+}
+
+proc resetNoise(){local cellCounter,dendCounter,tempSigma,tempIave,nNumber localobj stimEvents
+    stimEvents = new File()
+    stimEvents.ropen("StimEvents2.txt")
+    
+    for cellCounter = 0,NCELL - 1{
+	nNumber = stimEvents.scanvar()
+	tempIave = stimEvents.scanvar()
+	tempSigma = stimEvents.scanvar()
+	noiseList.object(cellCounter).iave = tempIave
+	noiseList.object(cellCounter).sigma = tempSigma
+    }
+    
+    stimEvents.close()
+}
+
+//============================================
+//getPostStartIndex
+//Arg	preNeuron
+//Rtn	postStartIndex
+//Smr	
+//============================================
+func getPostStartIndex(){local postStartIndex localobj preNeuron
+    preNeuron = $o1
+    
+    if(preNeuron.getNeuronType() == 1 || preNeuron.getNeuronType() == 3){
+	postStartIndex = NCELL - preNeuron.getRightOrLeft() * NCELL_HALF
+    }else if(preNeuron.getNeuronType() == 2){
+	postStartIndex = (preNeuron.getRightOrLeft() - 1) * NCELL_HALF
+    }else{
+	printf("CONNECTION_ERROR[001]\n")
+    }
+    
+    return postStartIndex
+}
+
+proc connectCells(){local synCounter,segCount,segNum,segPosition,preCounter,postCounter,postStartIndex,dendCounter,weight,tempWeight localobj preNeuron,postNeuron,syn,nc
+    thresholdFire = $1
+    
+    synList = new List()
+    ncList = new List()
+    segNum = cellList.object(0).dend[0].nseg
+    
+    printf("-- connectCells() --\n")
+    for preCounter = 0,NCELL - 1{
+	preNeuron = cellList.object(preCounter)
+	printf("--- NEURON:%d,MakeOutputSyns\n",preCounter)
+	postStartIndex = getPostStartIndex(preNeuron)
+	
+	synCounter = 0
+	
+	for postCounter = postStartIndex , postStartIndex + NCELL_HALF - 1{
+	    postNeuron = cellList.object(postCounter)
+	    
+	    for dendCounter = 0,NINPUT - 1{
+		weight = conMatrix.x[preCounter][dendCounter] * conMatrix.x[postCounter][dendCounter + NINPUT]*0.02
+		if(weight != 0){
+		    
+		    synCounter = synCounter + 1
+		    
+		    for segCount = 0,segNum - 1{
+			segPosition = (1.0/segNum)*segCount + 1.0/(2.0*segNum)
+			
+			if(weight > 0){
+			    postNeuron.dend[postNeuron.getDendNumber(dendCounter)] syn = new ExpSyn(segPosition)
+			    tempWeight = weight
+			    syn.e = 0
+			    syn.tau = 3
+			}else{
+			    postNeuron.dend[postNeuron.getDendNumber(dendCounter)] syn = new ExpSyn(segPosition)
+			    tempWeight = weight * -1
+			    syn.e = 0
+			    syn.tau = 10
+			}
+			
+			//preNeuron.spike nc = new NetCon(&v(1.0),syn,0,1,tempWeight/segNum)
+			preNeuron.axon[postNeuron.getDendNumber(dendCounter)] nc = new NetCon(&v(1.0),syn,0,1,tempWeight/segNum)
+			
+			synList.append(syn)
+			ncList.append(nc)
+		    }
+		}
+	    }
+	}
+	printf("---- numSyn = %d\n",synCounter)
+    }
+    printf("-- end connectCells() --\n")
+}
+
+proc createDendMatrix(){local cellCounter,dendCounter
+    dendMatrix = new Matrix()
+    dendMatrix.resize(int(NCELL),int(NINPUT))
+    
+    printf("--- createDendMatrix() ---\n")
+    printf("---- print dendMatrix ----\n")
+    for cellCounter = 0,int(NCELL-1){
+	countPreNeuron(cellCounter,int(NINPUT))
+	for dendCounter = 0,int(NINPUT-1){
+	    dendMatrix.x[cellCounter][dendCounter] = tempPreNeuronNumberList.x(dendCounter)
+	    printf("%d ",dendMatrix.x[cellCounter][dendCounter])
+	}
+	printf("\n")
+    }
+    printf("---- end of dendMatrix ----\n")
+    printf("--- end createDendMatrix ---\n")
+}
+
+proc convertDendMatrixToDendVectorList(){local numDend,cellCounter
+    numDend = $1
+    dendVectorList = new List()
+    
+    for cellCounter = 0,NCELL-1{
+	addDendVectorToList(cellCounter,numDend)
+    }
+}
+
+proc addDendVectorToList(){local dendCounter,numDend,cellNumber localobj dendVector
+    
+    cellNumber = $1
+    numDend = $2
+    dendVector = new Vector()
+    
+    for dendCounter = 0,numDend-1{
+	if(dendMatrix.x[cellNumber][dendCounter] != 0){
+	    dendVector.append(dendCounter)
+	}
+    }
+    
+    dendVectorList.append(dendVector)
+}
+
+proc countPreNeuron(){local cellCounter,neuronNumber,numDend,dendCounter localobj preNeuronNumberList,preNeuronDendList
+    neuronNumber = $1
+    numDend = $2
+    
+    preNeuronNumberList = new Vector()
+    for cellCounter = 0,numDend-1{
+	preNeuronNumberList.append(0)
+    }
+    
+    for cellCounter = 0,NCELL - 1{
+	getWeight(cellCounter,neuronNumber,numDend)
+	preNeuronDendList = new Vector()
+	preNeuronDendList.copy(tempWeightList)
+	
+	for dendCounter = 0,preNeuronDendList.size()-1{
+	    preNeuronNumberList.x(preNeuronDendList.x(dendCounter)) = 1
+	}
+    }
+    
+    tempPreNeuronNumberList = new Vector()
+    tempPreNeuronNumberList.copy(preNeuronNumberList)
+}
+
+//============================================
+//readConnectionFile
+//Arg	null 
+//Rtn	null
+//Smr	
+//============================================
+proc readConnectionFile(){local row,col,item localobj fcon
+    fcon = new File()
+    fcon.ropen("Connection.txt")
+        
+    printf("-- readConnectionFile() --\n")
+    
+    conMatrix = new Matrix()
+    conMatrix.resize(int(NCELL),int(NINPUT+NOUTPUT))
+    lrList = new Vector()
+    typeList = new Vector()
+    
+    for row = 0,int(NCELL - 1){
+	// Since the form of file to read also includes information other than "binding magnitude", it performs mostly 3 times.
+	for col = 0,int(NINPUT + NOUTPUT + 2){
+	    item = fcon.scanvar()
+	    if(col == 1){
+		lrList.append(item)
+		printf("--- left_right = %f",item)
+	    }else if(col == 2){
+		typeList.append(item)
+		printf(" , neuron_type = %f",item)
+	    }else if(col >= 3){
+		conMatrix.x[row][col-3] = item
+		printf(" , %f",item)
+	    }
+	}
+	printf("\n")
+    }
+    
+    fcon.close() 
+    printf("-- end readConnectionFile() --\n")
+}
+
+//============================================
+//getWeight
+//Arg	preCount,
+//	postCount
+//Rtn	dendList(Vector)
+//Smr	
+//============================================
+proc getWeight(){local postCount,preCount,dendCount,numDend localobj dendList
+    preCount = $1
+    postCount = $2
+    numDend = $3
+    
+    dendList = new Vector()
+    
+    for dendCount = 0,numDend - 1{
+	weight = conMatrix.x[preCount][dendCount] * conMatrix.x[postCount][dendCount + numDend]
+	if(weight != 0){
+	    dendList.append(dendCount)
+	}
+    }
+    
+    tempWeightList = new Vector()
+    tempWeightList.copy(dendList)
+}
+
+endtemplate MyNetwork

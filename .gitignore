@@ -1,0 +1,13 @@
+*.csv
+*.xlsx
+
+*.txt
+!StimEvents.txt
+!StimEvents2.txt
+
+
+*~
+*.o
+*.pyc
+*.c
+*.dll

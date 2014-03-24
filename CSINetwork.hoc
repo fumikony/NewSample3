@@ -1,0 +1,394 @@
+load_file("MyNeuron.hoc")
+
+nrnpython("import neuron")
+nrnpython("from neuron import h")
+nrnpython("import sigmoid")
+nrnpython("import CreateStimEvents")
+
+begintemplate CSINetwork
+
+public init
+public writeVoltageRecorder
+public connectCells
+public setEtaToStim
+public getNoiseListCount
+public resetNoise
+public clearNoise
+public setFeromonStim
+public updateSigma
+public NCELL,NDEND,NAXON,NCELL_HALF,TSTOP
+public thresholdFire
+public setNilNetCon
+public resetVoltageRecorder
+objref cellList
+objref conMatrix
+objref ncList
+objref synList
+objref vrecList
+objref noiseList
+objref feromonList
+objref fireCounterList
+objref nil
+
+func getNoiseListCount(){
+    return noiseList.count()
+}
+
+proc setEtaToStim(){local neuronNumber,eta,dendCounter
+    eta = $1
+    neuronNumber = $2
+    noiseList.object(neuronNumber).setEta(eta)
+}
+
+proc setNilNetCon(){local synCounter,ncCounter
+    for ncCounter = 0,ncList.count()-1{
+	ncList.object(ncCounter).setpost(nil)
+    }
+}
+
+proc setSynNetCon(){local synCounter,ncCounter
+    for ncCounter = 0,ncList.count()-1{
+	ncList.object(ncCounter).setpost(synList.object(ncCounter))
+	ncList.object(ncCounter).threshold = thresholdFire
+    }
+}
+
+proc init(){
+    TSTOP = $1
+    NCELL = 86
+    NCELL_HALF = 43
+    NDEND = 5
+    NAXON = 5
+    printf("create\n")
+    createNeurons()
+    printf("read\n")
+    readConnection()
+    printf("noise\n")
+    //connectCells()
+    setNoise()
+    printf("setVoltageRecorder\n")
+    setVoltageRecorder()
+}
+
+proc createNeurons(){local cellCounter localobj myNeuron
+    cellList = new List()
+    for cellCounter = 0,NCELL - 1{
+	myNeuron = new MyNeuron(0,0,0)
+	cellList.append(myNeuron)
+    }
+}
+
+proc readConnection(){local row,col,item localobj fcon
+    fcon = new File()
+    fcon.ropen("Connection.txt")
+    
+    conMatrix = new Matrix()
+    conMatrix.resize(NCELL,NDEND+NAXON)
+    
+    //printf("readConnection[START]\n")
+    
+    for row = 0,NCELL - 1{
+	for col = 0,NDEND + NAXON + 2{
+	    item = fcon.scanvar()
+	    if(col == 1){
+		cellList.object(row).left_right = item
+		//printf("left_right = %f",item)
+	    }else if(col == 2){
+		cellList.object(row).neuron_type = item
+		//printf(",neuron_type = %f",item)
+	    }else if(col >= 3){
+		conMatrix.x[row][col-3] = item
+		//printf(",%f",item)
+	    }
+	}
+	//printf("\n")
+    }
+    //printf("readConnection[END]\n")
+    fcon.close()
+}
+
+//============================================
+//getPostStartIndex
+//Arg	preNeuron
+//Rtn	postStartIndex
+//Smr	
+//============================================
+func getPostStartIndex(){local postStartIndex localobj preNeuron
+    preNeuron = $o1
+    
+    if(preNeuron.neuron_type == 1 || preNeuron.neuron_type == 3){
+	postStartIndex = NCELL - preNeuron.left_right * NCELL_HALF
+    }else if(preNeuron.neuron_type == 2){
+	postStartIndex = (preNeuron.left_right - 1) * NCELL_HALF
+    }else{
+	printf("CONNECTION_ERROR[001]\n")
+    }
+    
+    return postStartIndex
+}
+
+proc connectCells(){local segCount,segNum,segPosition,preCounter,postCounter,postStartIndex,dendCounter,weight,tempWeight localobj preNeuron,postNeuron,syn,nc
+    thresholdFire = $1
+    
+    if(synList != nil){
+	setSynNetCon()
+    }else{
+	synList = new List()
+	ncList = new List()
+	segNum = cellList.object(0).dend[0].nseg
+	
+	for preCounter = 0,NCELL - 1{
+	    preNeuron = cellList.object(preCounter)
+	    printf("NEURON:%d,CONE\n",preCounter)
+	    postStartIndex = getPostStartIndex(preNeuron)
+	    for postCounter = postStartIndex , postStartIndex + NCELL_HALF - 1{
+		postNeuron = cellList.object(postCounter)
+		
+		for dendCounter = 0,NDEND - 1{
+		    weight = conMatrix.x[preCounter][dendCounter] * conMatrix.x[postCounter][dendCounter + NDEND]
+		    if(weight != 0){
+			
+			for segCount = 0,segNum - 1{
+			    segPosition = (1.0/segNum)*segCount + 1.0/(2.0*segNum)
+			    
+			    if(weight > 0){
+				postNeuron.dend[dendCounter] syn = new ExpSyn(segPosition)
+				tempWeight = weight
+				syn.tau = 3
+			    }else{
+				postNeuron.dend[dendCounter] syn = new ExpSyn(segPosition)
+				tempWeight = weight * -1
+				syn.e = -80
+				syn.tau = 10
+			    }
+			    
+			    preNeuron.spike nc = new NetCon(&v(1.0),syn,0,1,tempWeight/segNum)
+			    
+			    synList.append(syn)			
+			    ncList.append(nc)
+			}
+		    }
+		}
+	    }
+	}	
+    }
+    
+    
+}
+
+proc setVoltageRecorder(){local cellCounter localobj recorder
+    vrecList = new List()
+    
+    for cellCounter = 0,NCELL - 1{
+	recorder = new Vector()
+	recorder.record(&cellList.object(cellCounter).soma.v(0.5))
+	vrecList.append(recorder)
+    }
+}
+
+proc resetVoltageRecorder(){local cellCounter,numElements localobj recorder
+    for cellCounter = 0,NCELL - 1{
+	numElements = vrecList.object(cellCounter).size()-1
+	vrecList.object(cellCounter).remove(0,numElements)
+    }
+}
+
+proc writeVoltageRecorder(){local cellCounter,timeCounter localobj savef
+    
+    savef = new File()
+    savef.wopen("VoltageRecorder.csv")
+    
+    printf("WRITE VOLTAGE_RECORDER\n")
+    
+    savef.printf("time")
+    for cellCounter = 0,NCELL - 1{
+	savef.printf(",%f",cellCounter)
+    }
+    savef.printf("\n")
+    for timeCounter = 0,TSTOP / dt - 1{
+	savef.printf("%f",timeCounter*dt)
+	for cellCounter = 0,NCELL - 1{
+	    savef.printf(",%f",vrecList.object(cellCounter).x(timeCounter))
+	}	
+	savef.printf("\n")
+    }
+    
+    printf("END WRITING\n")
+    
+    savef.close()
+    
+}
+
+proc getNumFire(){local cellCounter,timeCounter,fireFlag,fireCounter,startTime,endTime,measureLength 
+    fireFlag = 0
+    fireCounter = 0
+    startTime = $1
+    endTime = $2
+    measureLength = endTime - startTime
+    fireCounterList = new Vector()
+    
+    
+    for cellConter = 0,NCELL - 1{
+	fireFlag = 0
+	fireCounter = 0
+	for timeCounter = startTime/dt,endTime/dt-1{
+	    if(vrecList.object(cellCounter).x(timeCounter) < 0.0){
+		fireFlag = 0
+	    }else if(fireFlag == 0){
+		fireFlag = 1
+		fireCounter = fireCounter + 1
+	    }
+	}
+	fireCounter = fireCounter / (measureLength / 250)
+	printf("length = %f , numFire = %f\n",measureLength/250,fireCounter)
+	fireCounterList.append(fireCounter)
+    }    
+}
+
+func updateSigma(){local cellCounter,nFire,delta,aveDelta,sqDelta,aveSQDelta,sigma,countFireTime localobj savef,savef2,idialFile,nowSigmaF
+    countFireTime = $1
+    
+    savef = new File()
+    savef.aopen("thresholdFire.csv")
+    
+    idialFile = new File()
+    idialFile.ropen("StimVoltage.txt")
+    
+    getNumFire(countFireTime,TSTOP)
+    
+    printf("===UPDATE_SIGMA_START===\n")
+    aveSQDelta = 0
+    aveDelta = 0
+    for cellCounter = 0,NCELL-1{
+	nFire = fireCounterList.x(cellCounter)
+	delta = idialFile.scanvar() - nFire
+	sqDelta = delta*delta
+	sigma = halfSigmoid(delta)
+	
+	aveDelta = aveDelta + delta
+	aveSQDelta = aveSQDelta + sqDelta
+	
+	printf("  MainNeuron Number = %f\n",cellCounter+1)
+	printf("  delta = %f\n",sqDelta)
+	printf("  numFire = %f\n",nFire)
+    }
+    
+    printf(" nowThresholdFire = %f\n",thresholdFire)
+    
+    aveDelta = aveDelta / NCELL
+    aveSQDelta = aveSQDelta / NCELL
+    sigma = halfSigmoid(aveDelta)
+    
+    savef.printf("%f,%f\n",thresholdFire,aveSQDelta)
+    thresholdFire = thresholdFire - sigma*0.1
+    
+    printf("===UPDATE_SIGMA_END===\n")
+    
+    savef.printf("\n")
+
+    savef.close()
+    idialFile.close()
+    return thresholdFire
+}
+
+proc setNoise(){local cellCounter,tempSigma,tempIave,nNumber,dendCounter localobj noiseStim,stimEvents
+    noiseList = new List()
+    stimEvents = new File()
+    stimEvents.ropen("StimEvents.txt")
+    
+    for cellCounter = 0,NCELL - 1{
+	nNumber = stimEvents.scanvar()
+	tempIave = stimEvents.scanvar()
+	tempSigma = stimEvents.scanvar()
+	
+	cellList.object(cellCounter).soma{
+	    noiseStim = new preNoisyI(0.5)
+	    noiseStim.iave = tempIave
+	    noiseStim.sigma = tempSigma
+	    noiseStim.del = 0
+	    noiseStim.dur = TSTOP
+	    noiseList.append(noiseStim)
+	}
+    }
+    
+    stimEvents.close()
+}
+
+proc resetNoise(){local cellCounter,dendCounter,tempSigma,tempIave,nNumber localobj stimEvents
+    stimEvents = new File()
+    stimEvents.ropen("StimEvents2.txt")
+    
+    for cellCounter = 0,NCELL - 1{
+	nNumber = stimEvents.scanvar()
+	tempIave = stimEvents.scanvar()
+	tempSigma = stimEvents.scanvar()
+	noiseList.object(cellCounter).iave = tempIave
+	noiseList.object(cellCounter).sigma = tempSigma
+    }
+    
+    stimEvents.close()
+}
+
+proc clearNoise(){local cellCounter,dendCounter,tempSigma,tempIave,nNumber localobj stimEvents
+    stimEvents = new File()
+    stimEvents.ropen("StimEvents.txt")
+    
+    for cellCounter = 0,NCELL - 1{
+	nNumber = stimEvents.scanvar()
+	tempIave = stimEvents.scanvar()
+	tempSigma = stimEvents.scanvar()
+	noiseList.object(cellCounter).iave = tempIave
+	noiseList.object(cellCounter).sigma = tempSigma
+    }
+    
+    stimEvents.close()
+}
+
+proc setFeromonStim(){local cellCounter,dendCounter,nNumber,delayTime localobj noiseStim
+    delayTime = $1
+    feromonList = new List()
+    for cellCounter = 0,NCELL - 1{
+	nNumber = cellCounter + 1
+	//if(nNumber == 5 || nNumber == 7 || nNumber == 9 || nNumber == 15 || nNumber == 23 || nNumber == 24 || nNumber == 39 || nNumber == 48 || nNumber == 50 || nNumber == 52 || nNumber == 58 || nNumber == 66 || nNumber == 67 || nNumber == 82 ){
+	//if(nNumber == 5 || nNumber == 7 || nNumber == 9 || nNumber == 15 || nNumber == 23 || nNumber == 24 || nNumber == 39 ){
+	if(nNumber == 5 || nNumber == 7 || nNumber == 9 || nNumber == 15 || nNumber == 23 || nNumber == 24 ){
+	    //if(nNumber == 15){
+	    //if(nNumber == 48 || nNumber == 50 || nNumber == 52 || nNumber == 58 || nNumber == 66 || nNumber == 67 || nNumber == 82 ){
+	    //for dendCounter = 0,NDEND - 1{
+	    cellList.object(cellCounter).soma{
+		noiseStim = new IClamp(0.5)
+		noiseStim.amp = 3.0
+		noiseStim.dur = 500
+		noiseStim.del = delayTime
+		feromonList.append(noiseStim)
+	    }
+	    //}
+	}
+    }
+}
+
+//============================================
+//sigmoid()
+//Arg	specific value set into sigmoid function 
+//Rtn	sigmoid(x)
+//Smr	
+//============================================
+func sigmoid(){localobj py
+    py = new PythonObject()
+    py.arg1 = $1
+    nrnpython("rtn = sigmoid.sigmoidFunc(arg1)")
+    return py.rtn
+}
+
+//============================================
+//halfSigmoid()
+//Arg	specific value set into sigmoid function 
+//Rtn	sigmoid(x) - 0.5
+//Smr	
+//============================================
+func halfSigmoid(){
+    return sigmoid($1)-0.5
+}
+
+
+endtemplate CSINetwork

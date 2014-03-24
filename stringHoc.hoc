@@ -1,0 +1,39 @@
+begintemplate stringHoc
+
+public init
+public strcat
+public dbl2str
+public int2str
+public strcatResult,dbl2strResult,int2strResult
+strdef strcatResult
+strdef dbl2strResult
+strdef int2strResult
+objref py
+
+proc init(){
+    py = new PythonObject()    
+    py.temp = 1
+    py.temp1 = "temp"
+    py.temp2 = "temp2"
+}
+
+proc strcat(){
+    py.temp1 = $s1
+    py.temp2 = $s2
+    nrnpython("tempReturn = temp1+temp2")
+    strcatResult = py.tempReturn
+}
+
+proc dbl2str(){
+    py.temp = $1
+    nrnpython("tempReturn = str(temp)")
+    dbl2strResult = py.tempReturn
+}
+
+proc int2str(){
+    py.temp = $1
+    nrnpython("tempReturn = str(int(temp))")
+    int2strResult = py.tempReturn
+}
+
+endtemplate stringHoc

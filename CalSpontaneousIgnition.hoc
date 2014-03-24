@@ -1,0 +1,666 @@
+load_file("MyNeuron.hoc")
+load_file("stringHoc.hoc")
+
+nrnpython("import neuron")
+nrnpython("from neuron import h")
+nrnpython("import sigmoid")
+nrnpython("import CreateStimEvents")
+
+//==========================================//
+// definition
+//==========================================//
+NCELL = 86
+NCELL_HALF = 43
+NDEND = 5
+NAXON = 5
+NOISE_SEED = 2014
+NUM_LOOP = 1
+MAX_STIM = 100
+
+//==========================================//
+// define some values to use after
+//==========================================//
+objref cellList
+objref ncList
+objref synList
+objref stimList
+objref conMatrix
+
+//==========================================//
+// value for measureing
+//==========================================//
+objref trec
+objref vrec[NCELL]
+//objref irec[NCELL]
+objref vrecList
+objref preNeuronList[NCELL]
+objref connectedNeuronList[NCELL]
+double stimValue[100]
+double numFire[NCELL]
+double numFireAve[NCELL]
+double sqDelta[NCELL]
+double finishFlag[NCELL]
+objref stimIdialArray[NCELL*MAX_STIM+MAX_STIM]
+
+//==========================================//
+// define some paths
+//==========================================//
+strdef CONNECTION_FILE
+strdef STIM_FILE
+strdef VOL_RECORD_FILE
+strdef NUM_FIRE_FILE
+strdef STIM_VOLTAGE
+strdef NOISE_SIGMA
+VOL_RECORD_FILE = "Voltage.csv"
+NUM_FIRE_FILE = "NumFire.csv"
+STIM_FILE = "StimEvents.txt"
+CONNECTION_FILE = "Connection.txt"
+STIM_VOLTAGE = "StimVoltage.txt"
+NOISE_SIGMA = "NoiseEvents.txt"
+
+//==========================================//
+// The simlation length is cheanged here
+//==========================================//
+tstop = 2000
+measureLength = 1000
+startMeasure = 500/dt
+endMeasure = 1500/dt
+
+//==========================================//
+// The name of an output file is
+//	changed here
+//==========================================//
+strdef outputName
+outputName = "simRunner.csv"
+
+//==========================================//
+// The threshold of ignition is
+//	changed here
+//==========================================//
+fireThreshold = 0.0
+
+//============================================
+//connectCells()
+//Arg	null 
+//Rtn	null
+//Smr	connect cells
+//============================================
+proc createConnectedCellList(){local tempCell,postCount,dendCount,preCount,segCount,postStartIndex,weight,segNum,segPosition,flagConnection localobj stim
+    
+    printf("====START_C3L====\n")
+    
+    nrnpython("CreateStimEvents.createStim('StimVoltage.txt','StimEvent2.txt',2000.0,80000.0)")
+    initStimIdialArray()
+    reloadStimIdialArray()
+    createPreNeuronList()
+    setStimIdialArray()
+    
+    printf("====END_C3L====\n")
+    
+}
+
+//============================================
+//updateStimIdialArray
+//Arg	null 
+//Rtn	null
+//Smr	null
+//============================================
+proc updateStimIdialArray(){
+    initStimIdialArray()
+    reloadStimIdialArray()
+    setStimIdialArray()
+}
+
+//============================================
+//createPreNeuronList
+//Arg	null 
+//Rtn	null
+//Smr	create preNeuronList
+//============================================
+proc createPreNeuronList(){local preCellCounter,postCellCounter,dendCounter,postStartIndex,segPosition,weight,segCount,segNum,sValue,eValue localobj preNeuron,postNeuron,nc,syn
+    segNum = cellList.object(0).dend[0].nseg
+    synList = new List()
+    ncList = new List()
+    
+    sValue = 0
+    eValue = 10
+    
+    for postCellCounter = 0,NCELL - 1{
+	connectedNeuronList[postCellCounter] = new List()
+    }
+    
+    for preCellCounter = 0,NCELL - 1{
+	preNeuronList[preCellCounter] = new List()
+	preNeuron = cellList.object(preCellCounter)
+	postStartIndex = getPostStartIndex(preNeuron)
+	
+	for postCellCounter = postStartIndex , postStartIndex{ 
+	    printf("pre,pos[%lf,%lf]\n",preCellCounter,postCellCounter)
+	    postNeuron = cellList.object(postCellCounter)
+	    
+	    if(isConneced(preCellCounter,postCellCounter) != 0){
+		for dendCounter = 0,NDEND-1{
+		    
+		    printf("postStartIndex,sValue,eValue[%lf,%lf,%lf]\n",postStartIndex,sValue,eValue)
+		    printf("pre,pos,dend[%lf,%lf,%lf]\n",preCellCounter,postCellCounter,dendCounter)
+		    printf("postStartIndex + sValue = %lf\n",postStartIndex + sValue)
+		    weight = conMatrix.x[preCellCounter][dendCounter] * conMatrix.x[postCellCounter][dendCounter + NDEND]
+		    
+		    if(weight != 0){
+			preNeuron = new MyNeuron(0,0,0)
+			preNeuronList[preCellCounter].append(preNeuron)
+			connectedNeuronList[postCellCounter].append(preNeuron)
+			
+			for segCount = 0,segNum - 1{
+			    segPosition = (1.0/segNum)*segCount + 1.0/(2.0*segNum)
+			    
+			    if(weight > 0){
+				postNeuron.dend[dendCounter] syn = new ExpSyn(segPosition)
+			    }else{
+				postNeuron.dend[dendCounter] syn = new Exp2Syn(segPosition)
+				weight = weight * -1
+			    }
+			    
+			    synList.append(syn)
+			    preNeuron.axon[dendCounter] nc = new NetCon(&v(1.0),syn,-20,1,weight/segNum)
+			    ncList.append(nc)
+			}
+		    }
+		}
+	    }
+	}
+    }
+}
+
+//============================================
+//isConneced
+//Arg	preCount,
+//	postCount
+//Rtn	1 or 0
+//Smr	This function returns 1, if the
+//	specified binding magnitude 
+//	is except zero
+//============================================
+func isConneced(){local postCount,preCount,dendCount
+    preCount = $1
+    postCount = $2
+    
+    for dendCount = 0,NDEND - 1{
+	weight = conMatrix.x[preCount][dendCount] * conMatrix.x[postCount][dendCount + NDEND]
+	if(weight != 0){
+	    return 1
+	}
+    }
+    return 0
+}
+
+//============================================
+//getPostStartIndex
+//Arg	preNeuron
+//Rtn	postStartIndex
+//Smr	
+//============================================
+func getPostStartIndex(){local postStartIndex localobj preNeuron
+    preNeuron = $o1
+    
+    if(preNeuron.neuron_type == 1 || preNeuron.neuron_type == 3){
+	postStartIndex = NCELL - preNeuron.left_right * NCELL_HALF
+    }else if(preNeuron.neuron_type == 2){
+	postStartIndex = (preNeuron.left_right - 1) * NCELL_HALF
+    }else{
+	printf("CONNECTION_ERROR[001]\n")
+    }
+    
+    return postStartIndex
+}
+
+//============================================
+//setStimIdialArray
+//Arg	null 
+//Rtn	null
+//Smr	used updateStimIdialArray,
+//	DO NOT CALL THIS with 
+//	this simple substance. 
+//============================================
+proc setStimIdialArray(){local cellCounter,listCounter,stimCounter localobj stim
+    for cellCounter = 0,NCELL - 1{
+	for listCounter = 0,preNeuronList[cellCounter].count-1{
+	    for stimCounter = 0,MAX_STIM - 1{
+		if(stimIdialArray[cellCounter*MAX_STIM+stimCounter] != -1){
+		    preNeuronList[cellCounter].object(listCounter).dend[0]{
+			stim = new IClamp(0.0)
+			stim.del = stimIdialArray[cellCounter*MAX_STIM+stimCounter]
+			stim.dur = 1.0
+			stim.amp = 5.0
+		    }
+		}
+	    }
+	}
+    }
+}
+
+proc createStimIdialArray(){local cellCounter,listCounter,stimCounter localobj stim
+    for cellCounter = 0,NCELL - 1{
+	for stimCounter = 0,MAX_STIM-1{
+	    preNeuronList[cellCounter].object(listCounter).dend[0]{
+		stim = new IClamp(0.0)
+		stim.del = stimIdialArray[cellCounter*MAX_STIM+stimCounter]
+		stim.dur = 1.0
+		stim.amp = 5.0
+	    }  
+	}
+    }
+}
+
+//============================================
+//reloadStimIdialArray
+//Arg	null 
+//Rtn	null
+//Smr	used updateStimIdialArray,
+//	DO NOT CALL THIS with 
+//	this simple substance. 
+//============================================
+proc reloadStimIdialArray(){local cellCounter,stimCounter,numStim localobj stimEvent
+    stimEvent = new File()
+    stimEvent.ropen("StimEvent2.txt")
+    
+    for cellCounter = 0,NCELL-1{
+	stimEvent.scanvar()
+	numStim = stimEvent.scanvar()
+	printf("numStim = %lf\n",numStim)
+	for stimCounter = 0, numStim - 1{
+	    stimIdialArray[cellCounter*MAX_STIM+stimCounter] = stimEvent.scanvar()
+	}
+    }
+    
+    stimEvent.close()
+}
+
+//============================================
+//initSimIdialArray
+//Arg	null 
+//Rtn	null
+//Smr	used updateStimIdialArray,
+//	DO NOT CALL THIS with 
+//	this simple substance. 
+//============================================
+proc initStimIdialArray(){local stimCounter
+    for stimCounter = 0,(NCELL*MAX_STIM) - 1{
+	stimIdialArray[stimCounter] = -1
+    }
+}
+
+//============================================
+//createCells()
+//Arg	null 
+//Rtn	null
+//Smr	Create the object of cells
+//	and add it to list
+//============================================
+proc createCells(){local i,x,y localobj cell
+    cellList = new List()
+    for i = 0,NCELL-1{
+	x = 0
+	y = 0
+	
+	cell = new MyNeuron(x,y,0)
+	cellList.append(cell)
+    }
+}
+
+//============================================
+//readConnection()
+//Arg	null 
+//Rtn	nul
+//Smr	read the binding mafnitude file
+//	and store it in a matrix
+//============================================
+proc readConnection(){local row,col,item localobj fcon
+    fcon = new File()
+    fcon.ropen(CONNECTION_FILE)
+    
+    conMatrix = new Matrix()
+    conMatrix.resize(NCELL,NDEND+NAXON)
+    
+    printf("readConnection[START]\n")
+    
+    for row = 0,NCELL - 1{
+	for col = 0,NDEND + NAXON + 2{
+	    item = fcon.scanvar()
+	    if(col == 1){
+		cellList.object(row).left_right = item
+		printf("left_right = %f",item)
+	    }else if(col == 2){
+		cellList.object(row).neuron_type = item
+		printf(",neuron_type = %f",item)
+	    }else if(col >= 3){
+		conMatrix.x[row][col-3] = item
+		printf(",%f",item)
+	    }
+	}
+	printf("\n")
+    }
+    printf("readConnection[END]\n")
+    fcon.close()
+}
+
+//============================================
+//setNoise()
+//Arg	null 
+//Rtn	null
+//Smr	set noisy stimular for adjustment
+//============================================
+proc setNoise(){local row,col,noisePow,noiseSig,localCounter localobj stimEvent,stim
+    stimEvent = new File()
+    stimEvent.ropen(STIM_FILE)
+    
+    stimList = new List()
+    
+    for row = 0,NCELL - 1{
+	stimEvent.scanvar()
+	noisePow = stimEvent.scanvar()
+	noiseSig = stimEvent.scanvar()
+	
+	
+	cellList.object(row).soma{
+	    stim = new noisyI(0.0)
+	    stim.iave = noisePow
+	    stim.sigma = noiseSig
+	    stim.new_seed(NOISE_SEED)
+	    stimList.append(stim)
+	}
+	
+    }    
+    stimEvent.close()
+}
+
+//============================================
+//getNumFire()
+//Arg	start time of a simulation , 
+//	end time of a simulation ,
+//	cellIndex
+//Rtn	The number of ignition per 250msec
+//Smr	count it from membrane potential
+//============================================
+func getNumFire(){local fireFlag,fireCount,counter
+    //initation
+    fireFlag = 0
+    fireCounter = 0
+    
+    //count number of ignition from membrane potential
+    for counter = $1,$2{
+	if(vrec[$3].x(counter) < fireThreshold){
+	    fireFlag = 0
+	}else if(fireFlag == 0){
+	    fireFlag = 1
+	    fireCounter = fireCounter + 1
+	}
+    }
+    
+    //cal ave
+    printf("measureLength = %lf\n",measureLength)
+    fireCounter = fireCounter / (measureLength/250.0)
+    printf("BIN:FC = %lf:%lf\n",measureLength/250.0,fireCounter)
+    
+    return fireCounter
+}
+
+//============================================
+//setVoltageRacorder()
+//Arg	null 
+//Rtn	null
+//Smr	
+//============================================
+proc setVoltageRecorder(){local i localobj nc,nil
+    
+    trec = new Vector()
+    trec.record(&t)
+    
+    for i = 0,NCELL - 1{
+	vrec[i] = new Vector()
+	//irec[i] = new Vector()
+	
+	//irec[i].record(&stimList.object(i).i)
+	vrec[i].record(&cellList.object(i).soma.v(0.5))
+    }
+}
+
+//============================================
+//initNumFireAve()
+//Arg	null 
+//Rtn	null
+//Smr	init numFireAve = 0
+//============================================
+proc initNumFireAve(){local cellCounter
+    for cellCounter = 0,NCELL-1{
+	numFireAve[cellCounter] = 0
+    }
+}
+
+//============================================
+//addNumFireAve()
+//Arg	null
+//Rtn	null
+//Smr	In order to cal numFire's ave
+//============================================
+proc addNumFireAve(){local cellCounter
+    for cellCounter=0,NCELL-1{
+	numFire[cellCounter] = getNumFire(startMeasure,startMeasure+endMeasure,cellCounter)	
+	numFireAve[cellCounter] = numFireAve[cellCounter] + numFire[cellCounter]
+    }
+}
+
+//============================================
+//calAveNumFireAve()
+//Arg	num of times of adding 
+//Rtn	null
+//Smr	cal ave
+//============================================
+proc calAveNumFireAve(){local cellCounter
+    for cellCounter=0,NCELL-1{
+	numFireAve[cellCounter] = numFireAve[cellCounter] / $1
+    }
+}
+
+//============================================
+//sigmoid()
+//Arg	specific value set into sigmoid function 
+//Rtn	sigmoid(x)
+//Smr	
+//============================================
+func sigmoid(){localobj py
+    py = new PythonObject()
+    py.arg1 = $1
+    nrnpython("rtn = sigmoid.sigmoidFunc(arg1)")
+    return py.rtn
+}
+
+//============================================
+//halfSigmoid()
+//Arg	specific value set into sigmoid function 
+//Rtn	sigmoid(x) - 0.5
+//Smr	
+//============================================
+func halfSigmoid(){
+    return sigmoid($1)-0.5
+}
+
+//============================================
+//setNoiseSigma()
+//Arg	index of cell,
+//	specific value to set into sigma
+//Rtn	null
+//Smr	null
+//============================================
+proc setNoiseSigma(){local stimSigma,nowCellNumber,counter,dendCounter
+    nowCellNumber = $1
+    stimSigma = $2
+    
+    stimList.object(nowCellNumber).sigma = stimSigma
+    
+}
+
+
+//============================================
+//updateStimEvents()
+//Arg	null 
+//Rtn	null
+//Smr	
+//============================================
+proc updateStimEvents(){local cellCounter,stimCounter,tempIS,delta,sigmoid localobj savef,sigmaf,stimf
+    
+    savef = new File()
+    savef.wopen(STIM_FILE)
+    
+    stimf = new File()
+    stimf.ropen(STIM_VOLTAGE)
+    
+    sigmaf = new File()
+    sigmaf.aopen("SIGMA.csv")
+    
+    for cellCounter = 0,NCELL - 1{
+	tempIS = stimf.scanvar()
+	delta = tempIS - numFireAve[cellCounter]
+	sigma = halfSigmoid(delta)	
+	sqDelta[cellCounter] = delta*delta
+	
+	printf("NEURON[%lf] : %lf , sigmoid = %lf , delta = %lf \n",cellCounter,numFire[cellCounter],sigmoid,delta)
+	stimCounter = cellCounter
+	savef.printf("%lf\t%lf\t%lf\n",cellCounter,stimList.object(stimCounter).iave,stimList.object(stimCounter).sigma+(0.1*sigma))
+	sigmaf.printf("%lf,",stimList.object(stimCounter).sigma)
+	//stimList.object(stimCounter).sigma = stimList.object(stimCounter).sigma+(0.1*sigma)
+    }
+    sigmaf.printf("\n")
+    
+    savef.close()
+    stimf.close()
+    sigmaf.close()
+}
+
+
+//============================================
+//initSim()
+//Arg	null 
+//Rtn	null
+//Smr	
+//============================================
+proc initSim(){
+    
+    printf("=== initSim() start ===\n")
+    
+    printf("createCells()\n")
+    createCells()
+    
+    printf("readConnection()\n")
+    readConnection()
+    
+    printf("createConnectCellList()\n")
+    createConnectedCellList()
+    
+    printf("setStim")
+    //setNoise()
+    
+    printf("=== initSim() finish ===\n")
+}
+
+//============================================
+//startSim()
+//Arg	nowLoop
+//Rtn	null
+//Smr	Make noise of specified sigma doubled. 
+//============================================
+proc startSim(){
+    printf("=== startSim() start ===\n")
+    
+    printf("setVoltageRecorder()\n")
+    setVoltageRecorder()
+    setVoltageRecorderList()
+    
+    printf("*** run() ***\n")
+    run()
+    
+    printf("=== startSim() finish ===\n")   
+}
+
+//============================================
+//SimLoop()
+//Arg	null 
+//Rtn	null
+//Smr	main
+//============================================
+proc SimLoop(){local loopCounter,fireAveCounter,cellCounter,aveNum localobj savef
+    aveNum = 1
+    
+    initSim()
+    
+    for loopCounter = 0,NUM_LOOP-1{
+	initNumFireAve()
+		
+	for fireAveCounter = 1,aveNum{
+	    printf("[Loop,Ave] : %lf , %lf\n",loopCounter,fireAveCounter)
+	    startSim()
+	    addNumFireAve()
+	}
+	calAveNumFireAve(aveNum)
+	updateStimEvents()	
+	updateStimIdialArray()
+	
+	writeNumFire(loopCounter)
+	writeVoltageRecord()
+	writeVoltageRecorderList()
+    }
+}
+
+proc writeVoltageRecord(){local timeCounter localobj voltagef
+    voltagef = new File()
+    voltagef.ropen("Voltage.csv")
+    
+    for timeCounter = 0,2000/dt-1{
+	voltagef.printf("%lf,%lf",trec.x(timeCounter),vrec[0].x(timeCounter))
+    }
+    voltagef.close()
+}
+
+proc setVoltageRecorderList(){local cellCounter localobj tempVector
+    vrecList = new List()
+    for cellCounter = 0,connectedNeuronList[0].count() - 1{
+	tempVector = new Vector()
+	tempVector.record(&connectedNeuronList[0].object(cellCounter).soma.v(0.5))
+	vrecList.append(tempVector)
+    }
+}
+
+proc writeVoltageRecorderList(){local cellCounter,timeCounter localobj savef
+    
+    savef = new File()
+    savef.wopen("ConnectedNeuronVoltage.csv")
+    
+    for timeCounter = 0,2000/dt-1{
+	savef.printf("%lf",trec.x(timeCounter))
+	for cellCounter = 0,vrecList.count()-1{
+	    savef.printf(",%lf",vrecList.object(cellCounter).x(timeCounter))
+	}
+	savef.printf("\n")
+    }
+    
+    savef.close()
+}
+
+proc writeNumFire(){local cellCounter,loopCounter localobj savef
+    loopCounter = $1
+    
+    savef = new File()
+    savef.aopen(NUM_FIRE_FILE)
+    savef.printf("%lf",loopCounter)
+    
+    for cellCounter=0,NCELL-1{
+	savef.printf(",%lf",sqDelta[cellCounter])
+    }
+    
+    savef.printf("\n")	
+    savef.close()	
+}
+
+proc test(){
+    nrnpython("CreateStimEvents.createStim('StimVoltage.txt','StimEvent2.txt',2000.0,80000.0)")
+}

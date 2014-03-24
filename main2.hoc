@@ -1,0 +1,102 @@
+load_file("MyNeuron.hoc")
+load_file("MyNeuron2.hoc")
+load_file("SingleCellSolution.hoc")
+load_file("preNoisyManager.hoc")
+
+nrnpython("import neuron")
+nrnpython("from neuron import h")
+nrnpython("import sigmoid")
+nrnpython("import CreateStimEvents")
+
+objref csiSingleList
+objref stimList
+objref pnm
+
+proc initSim(){local i
+    tstop = 5000
+    
+    csiSingleList = new List()
+    
+    
+    for i=1,43{
+	createCSI(i)	
+    }
+    
+    //createCSI(1)
+    getStimList()
+    pnm = new preNoisyManager()
+    pnm.TSTOP = 5000
+    pnm.loadNormRand()
+}
+
+proc createCSI(){localobj csiSingle
+    csiSingle = new SingleCellSolution(1,1,$1)
+    csiSingle.TSTOP = 5000
+    csiSingle.MAX_STIM = 300
+    csiSingleList.append(csiSingle)
+}
+
+proc getStimList(){local cellCounter
+    stimList = new List()
+    for cellCounter = 0,csiSingleList.count()-1{
+	stimList.append(csiSingleList.object(cellCounter).noiseStim)
+    }
+}
+
+proc stepStimList(){local cellCounter,neuronNumber,eta
+    for cellCounter = 0,csiSingleList.count()-1{
+	neuronNumber = csiSingleList.object(cellCounter).getNeuronNumber()
+	eta = pnm.getEta(neuronNumber)
+	stimList.object(cellCounter).setEta(eta)
+    }
+    pnm.progressStep()
+}
+
+proc startSim(){local loop,csiCounter,timeCounter localobj savef,savef2
+    
+    savef = new File()
+    savef2 = new File()
+    
+    for csiCounter = 0,csiSingleList.count() - 1{
+	csiSingleList.object(csiCounter).updateIdialStim()
+    }
+    
+    for loop = 1,40{
+	printf("StartSim %f/20 \n",loop)
+	//run()
+	startSimulation()
+	printf("end\n")
+	savef.aopen("recordD.csv")
+	savef2.aopen("recordI.csv")
+	printf("write\n")
+	for csiCounter = 0,csiSingleList.count() - 1{
+	    printf("updateSigma:NeuronNumber = %d\n",csiCounter)
+	    csiSingleList.object(csiCounter).updateSigma()
+	    savef.printf("%f,",csiSingleList.object(csiCounter).DELTA)
+	    savef2.printf("%f,",csiSingleList.object(csiCounter).IAVE)
+	}
+	printf("end\n")
+	savef.printf("\n")
+	savef2.printf("\n")
+	savef.close()
+	savef2.close()
+    }  
+}
+
+proc startSimulation(){local loopCounter,dtCounter,csiCounter localobj csiSingle
+    
+    stdinit()
+    for loopCounter = 0,5000-1{
+	for dtCounter = 0,(1/dt)-1{
+	    stepStimList()
+	    step()
+	}
+	flushPlot()
+    }
+    //csiSingleList.object(0).writeVoltageRecorder()
+    pnm.initPreNoise()
+}
+
+proc sample2(){
+    nrnpython("CreateStimEvents.createStim('StimVoltage.txt','StimEvent2.txt',5000.0,200000.0)")
+}

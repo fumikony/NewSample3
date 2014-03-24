@@ -1,0 +1,442 @@
+load_file("MyNeuron.hoc")
+
+nrnpython("import neuron")
+nrnpython("from neuron import h")
+nrnpython("import sigmoid")
+nrnpython("import CreateStimEvents")
+
+
+begintemplate CSISingle
+
+public init
+public printNeuron
+public updateIdialStim
+public writeVoltageRecorder
+public updateSigma
+public NCELL,NCELL_HALF,NDEND,NAXON,MAX_STIM,TSTOP
+
+//==========================================//
+// Neuron
+//==========================================//
+objref mainNeuron
+objref connectedNeuronList
+
+//==========================================//
+// Binding magnitude
+//==========================================//
+objref ncList
+objref synList
+objref conMatrix
+double neuronType[86]
+double neuronRightLeft[86]
+double iaveArray[86]
+double sigmaArray[86] 
+
+//==========================================//
+// recorder
+//==========================================//
+objref vrecConnectedList
+objref vrec
+
+//==========================================//
+// stim
+//==========================================//
+objref stimList[86]
+objref noiseStim
+
+//==========================================//
+// string
+//==========================================//
+strdef CONNECTION_FILE
+
+proc init(){local nType,nRL,nNumber
+    nType=$1 nRL=$2 nNumber=$3
+    
+    NCELL = 86
+    NCELL_HALF = 43
+    NDEND = 5
+    NAXON = 5
+    MAX_STIM = 300
+    TSTOP = 5000
+    CONNECTION_FILE = "Connection.txt"
+
+    nNumber = nNumber - 1
+    mainNeuron = new MyNeuron(0,0,0)
+    mainNeuron.neuron_type = nType
+    mainNeuron.left_right = nRL
+    mainNeuron.neuronNumber = nNumber
+    
+    readConnection()
+    createPreNeuron()
+    createIdialStim()
+    setVoltageRecorder()
+    setNoise()
+    
+    printNeuron()
+}
+
+proc printNeuron(){local cellCounter,numCell
+    numCell = connectedNeuronList.count()
+    
+    printf("MAIN_NEURON\n")
+    printf("-neuronType = %f\n",mainNeuron.neuron_type)
+    printf("-neuronRightLeft = %f\n",mainNeuron.left_right)
+    printf("-neuronNumber = %f\n",mainNeuron.neuronNumber)
+    printf("\n")
+    
+    printf(" CONNECTED_CELL : %f/43 \n",numCell)
+    for cellCounter = 0,numCell-1{
+	printf(" -neuronNumber = %f\n",connectedNeuronList.object(cellCounter).neuronNumber)
+    }
+}
+
+proc createPreNeuron(){local segCount,segNum,segPosition,cellCounter,neuronNumber,dendCounter,weight localobj preNeuron,postNeuron,syn,nc
+    
+    postNeuron = mainNeuron
+    synList = new List()
+    ncList = new List()
+    connectedNeuronList = new List()
+    segNum = mainNeuron.dend[0].nseg
+    neuronNumber = mainNeuron.neuronNumber
+    
+    for cellCounter = 0,NCELL - 1{
+	if(isConnected(cellCounter) == 1 && getWeight(cellCounter,neuronNumber) != 0){
+	    preNeuron = new MyNeuron(0,0,0)
+	    preNeuron.neuronNumber = cellCounter
+	    connectedNeuronList.append(preNeuron)
+	    
+	    for dendCounter = 0,NDEND - 1{
+		weight = conMatrix.x[cellCounter][dendCounter] * conMatrix.x[neuronNumber][dendCounter + NDEND]
+		if(weight != 0){
+		    
+		    for segCount = 0,segNum - 1{
+			segPosition = (1.0/segNum)*segCount + 1.0/(2.0*segNum)
+			
+			if(weight > 0){
+			    postNeuron.dend[dendCounter] syn = new ExpSyn(segPosition)
+			}else{
+			    postNeuron.dend[dendCounter] syn = new ExpSyn(segPosition)
+			    weight = weight * -1
+			    syn.e = -80
+			}
+			
+			preNeuron.axon[dendCounter] nc = new NetCon(&v(1.0),syn,0,1,weight/segNum)
+			
+			synList.append(syn)			
+			ncList.append(nc)
+		    }
+		}
+	    }    
+	}
+    }
+}
+
+//============================================
+//getWeight
+//Arg	preCount,
+//	postCount
+//Rtn	1 or 0
+//Smr	This function returns 1, if the
+//	specified binding magnitude 
+//	is except zero
+//============================================
+func getWeight(){local postCount,preCount,dendCount
+    preCount = $1
+    postCount = $2
+    
+    for dendCount = 0,NDEND - 1{
+	weight = conMatrix.x[preCount][dendCount] * conMatrix.x[postCount][dendCount + NDEND]
+	if(weight != 0){
+	    return 1
+	}
+    }
+    return 0
+}
+
+//============================================
+//isConnected()
+//Arg	neuronNumber 
+//Rtn	1 or 0 : ERROR -1
+//Smr	
+//============================================
+func isConnected(){local neuronNumber,nType,nRL
+    neuronNumber = $1
+    
+    nType = neuronType[neuronNumber]
+    nRL = neuronRightLeft[neuronNumber]
+    
+    if(nType == 1 || nType == 3){
+	if(nRL == 1){
+	    if(mainNeuron.neuronNumber >= NCELL_HALF){
+		return 1
+	    }
+	}else if(nRL == 2){
+	    if(mainNeuron.neuronNumber < NCELL_HALF){
+		return 1
+	    }
+	}else{
+	    printf("ERROR(getNeuronType():0001):The form of Connection.csv is broken \n")
+	    return -1
+	}
+    }else if(nType == 2){
+	if(nRL == 1){
+	    if(mainNeuron.neuronNumber < NCELL_HALF){
+		return 1
+	    }
+	}else if(nRL == 2){
+	    if(mainNeuron.neuronNumber >= NCELL_HALF){
+		return 1
+	    }
+	}else{
+	    printf("ERROR(getNeuronType():0001):The form of Connection.csv is broken \n")
+	    return -1
+	}
+    }else{
+	printf("ERROR(getNeuronType():0002):The form of Connection.csv is broken \n")
+	return -1	
+    }
+    
+    return 0
+}
+
+//============================================
+//readConnection()
+//Arg	null 
+//Rtn	nul
+//Smr	read the binding mafnitude file
+//	and store it in a matrix
+//============================================
+proc readConnection(){local row,col,item,numCell,numConnection localobj fcon
+    fcon = new File()
+    fcon.ropen(CONNECTION_FILE)
+    
+    numCell = NCELL
+    numConnection = NDEND + NAXON
+    
+    printf("%f,%f\n",numCell,numConnection)
+    
+    conMatrix = new Matrix()
+    conMatrix.resize(numCell,numConnection)
+    
+    printf("readConnection[START]\n")
+    
+    for row = 0,NCELL - 1{
+	for col = 0,NDEND + NAXON + 2{
+	    item = fcon.scanvar()
+	    if(col == 1){
+		neuronRightLeft[row] = item
+		//printf("left_right = %f",item)
+	    }else if(col == 2){
+		neuronType[row] = item
+		//printf(",neuron_type = %f",item)
+	    }else if(col >= 3){
+		conMatrix.x[row][col-3] = item
+		//printf(",%f",item)
+	    }
+	}
+	//printf("\n")
+    }
+    printf("readConnection[END]\n")
+    fcon.close()
+}
+
+proc createIdialStim(){local cellCounter,stimCounter,nulCell localobj stim
+    numCell = connectedNeuronList.count()
+    for cellCounter = 0,numCell - 1{
+	stimList[cellCounter] = new List()
+	for stimCounter = 0,MAX_STIM - 1{
+	    connectedNeuronList.object(cellCounter).dend[0]{
+		stim = new IClamp(0.0)
+		stim.del = 0.0
+		stim.dur = 0.0
+		stim.amp = 0.0
+		stimList[cellCounter].append(stim)
+	    }
+	}
+    }
+}
+
+proc updateIdialStim(){local cellCounter,stimCounter,numStim,numCell,nNumber localobj stimEvent,stimEventList 
+    numCell = connectedNeuronList.count()
+    stimEventList = new Matrix()
+    stimEventList.resize(NCELL,MAX_STIM)
+    
+    stimEvent = new File()
+    stimEvent.ropen("StimEvent2.txt")    
+    for cellCounter = 0,NCELL - 1{
+	stimEvent.scanvar()
+	numStim = stimEvent.scanvar()
+	
+	for stimCounter = 0,MAX_STIM - 1{
+	    stimEventList.x[cellCounter][stimCounter] = -1.0
+	}
+	
+	for stimCounter = 0,numStim - 1{
+	    stimEventList.x[cellCounter][stimCounter] = stimEvent.scanvar()
+	}
+    }
+    stimEvent.close()
+    
+    for cellCounter = 0,numCell-1{
+	nNumber = connectedNeuronList.object(cellCounter).neuronNumber
+	
+	for stimCounter = 0,MAX_STIM - 1{
+	    if(stimEventList.x[nNumber][stimCounter] != -1.0){
+		stimList[cellCounter].object(stimCounter).del = stimEventList.x[nNumber][stimCounter]
+		stimList[cellCounter].object(stimCounter).dur = 1.0
+		stimList[cellCounter].object(stimCounter).amp = 5.0
+	    }else{
+		stimList[cellCounter].object(stimCounter).del = 0.0
+		stimList[cellCounter].object(stimCounter).dur = 0.0
+		stimList[cellCounter].object(stimCounter).amp = 0.0	
+	    }
+	}	
+    }
+}
+
+proc setVoltageRecorder(){local cellCounter,numCell localobj recorder
+    numCell = connectedNeuronList.count()
+    vrec = new Vector()
+    vrec.record(&mainNeuron.soma.v(0.5))
+    
+    vrecConnectedList = new List()
+    for cellCounter = 0,numCell - 1{
+	recorder = new Vector()
+	recorder.record(&connectedNeuronList.object(cellCounter).soma.v(0.5))
+	vrecConnectedList.append(recorder)
+    }
+}
+
+proc writeVoltageRecorder(){local cellCounter,timeCounter,numCell localobj saveMain,saveConnected
+    saveMain = new File()
+    saveConnected = new File()
+    saveMain.wopen("MainVoltage.csv")
+    saveConnected.wopen("ConnectedVoltage.csv")
+    
+    numCell = connectedNeuronList.count()
+    
+    printf("==Outout file...==\n")
+    
+    printf("MainVoltage\n")
+    saveMain.printf("time,voltage\n")
+    saveConnected.printf("time,voltage\n")
+    for timeCounter = 0,TSTOP/dt - 1{
+	saveMain.printf("%lf,%lf\n",timeCounter*dt,vrec.x(timeCounter))
+	saveConnected.printf("%lf",timeCounter*dt)
+	for cellCounter = 0,numCell - 1{
+	    saveConnected.printf(",%lf",vrecConnectedList.object(cellCounter).x(timeCounter))
+	}
+	saveConnected.printf("\n")
+    }
+    
+    printf("==end output==\n")
+    
+    saveMain.close()
+    saveConnected.close()
+}
+
+proc setNoise(){local cellCounter,nNumber localobj noiseEvent,noise
+    noiseEvent = new File()
+    noiseEvent.ropen("StimEvents.txt")
+    
+    for cellCounter = 0,NCELL - 1{
+	noiseEvent.scanvar()
+	iaveArray[cellCounter] = noiseEvent.scanvar()
+	sigmaArray[cellCounter] = noiseEvent.scanvar()
+    }
+    
+    nNumber = mainNeuron.neuronNumber
+    mainNeuron.soma{
+	noise = new noisyI(0.0)
+	noise.iave = iaveArray[nNumber]
+	noise.sigma = sigmaArray[nNumber]
+	noiseStim = noise
+    }
+    
+}
+
+proc updateSigma(){local cellCounter,nNumber,nFire,idialNumFire,delta,sigma,sqDelta localobj stimVoltageFile,sigmaFile,deltaFile
+    stimVoltageFile = new File()
+    sigmaFile = new File()
+    deltaFile = new File()
+    
+    stimVoltageFile.ropen("StimVoltage.txt")
+    sigmaFile.aopen("SIGMA.csv")
+    deltaFile.aopen("DELTA.csv")
+    
+    nNumber = mainNeuron.neuronNumber
+    
+    for cellCounter = 0,NCELL-1{
+	if(cellCounter == nNumber){
+	    idialNumFire = stimVoltageFile.scanvar()
+	}else{
+	    stimVoltageFile.scanvar()
+	}
+    }
+    
+    nFire = getNumFire(500)
+    delta = idialNumFire - nFire
+    sqDelta = delta*delta
+    sigma = halfSigmoid(delta)
+    noiseStim.iave = noiseStim.iave - 0.1*sigma
+    
+    sigmaFile.printf("%lf,%lf,%lf\n",noiseStim.iave,nFire,sqDelta)
+    deltaFile.printf("%lf\n",sqDelta)
+    printf("MainNeuron Number = %f\n",nNumber)
+    printf("delta = %f\n",sqDelta)
+    printf("numFire = %f\n",nFire)
+    
+    stimVoltageFile.close()
+    sigmaFile.close()
+    deltaFile.close()
+}
+
+//============================================
+//getNumFire()
+//Arg	start time of a simulation 
+//Rtn	The number of ignition per 250msec
+//Smr	count it from membrane potential
+//============================================
+func getNumFire(){local fireFlag,fireCount,counter,measureLength
+    fireFlag = 0
+    fireCounter = 0
+    measureLength = TSTOP - $1
+    
+    for counter = $1/dt,TSTOP/dt{
+	if(vrec.x(counter) < 0.0){
+	    fireFlag = 0
+	}else if(fireFlag == 0){
+	    fireFlag = 1
+	    fireCounter = fireCounter + 1
+	}
+    }
+    
+    fireCounter = fireCounter / (measureLength/250.0)
+    
+    return fireCounter
+}
+
+//============================================
+//sigmoid()
+//Arg	specific value set into sigmoid function 
+//Rtn	sigmoid(x)
+//Smr	
+//============================================
+func sigmoid(){localobj py
+    py = new PythonObject()
+    py.arg1 = $1
+    nrnpython("rtn = sigmoid.sigmoidFunc(arg1)")
+    return py.rtn
+}
+
+//============================================
+//halfSigmoid()
+//Arg	specific value set into sigmoid function 
+//Rtn	sigmoid(x) - 0.5
+//Smr	
+//============================================
+func halfSigmoid(){
+    return sigmoid($1)-0.5
+}
+
+endtemplate CSISingle
